@@ -5,29 +5,7 @@ import re
 from poe_api_wrapper import PoeApi
 
 
-try:
-
-    Poeclient = PoeApi("CN6Yyu36OUZAxL1N-ytjvg==")
-
-except Exception as e:
-    print(e)
-    print("error in connecting to POe")
-
-
-
 def get_chatgpt_answer(question):
-    # bot_list = ["chinchilla", "gpt3_5","chinchilla_instruct", "capybara","acouchy","llama_2_7b_chat","llama_2_13b_chat","llama_2_70b_chat","code_llama_7b_instruct","code_llama_13b_instruct","code_llama_34b_instruct","upstage_solar_0_70b_16bit"]
-
-    bot_list = ["chinchilla"]
-    for bot in bot_list:
-
-        try:
-            for chunk in Poeclient.send_message(bot, question):
-                pass
-            return chunk["text"]
-        except Exception as e:
-            print(e)
-            # raise e
 
     return get_cohere_answer(question)
 import cohere
