@@ -1,16 +1,19 @@
+
 import streamlit as st
 from pymongo import MongoClient
 import re
-# from streamlit_extras.app_logo import add_logo
-from poe_api_wrapper import PoeApi
+import cohere
+from datetime import datetime
 
+co = cohere.Client('PQ50WPjjMsFSzUhZlMQaGTlS30MyRs9YkbuKfhHh')
 
 def get_chatgpt_answer(question):
 
     return get_cohere_answer(question)
-import cohere
-co = cohere.Client('PQ50WPjjMsFSzUhZlMQaGTlS30MyRs9YkbuKfhHh')
 
+
+
+@st.cache_data()
 def get_cohere_answer(question):
     """
     This function uses the Cohere API to get an answer for the question
@@ -18,7 +21,8 @@ def get_cohere_answer(question):
 
     response = co.generate(
   model='command-nightly',
-  prompt="""
+  prompt="""there are two examples of errors that are already in the database.
+
 Error Example: a cookie header was received [${jndi:ldap://log4shell-generic-8molyf0ab2aqtscsyugh${lower:ten}.w.nessus.org/nessus}=${jndi:ldap://log4shell-generic-8molyf0ab2aqtscsyugh${lower:ten}.w.nessus.org/nessus};] that contained an invalid cookie.
 
 Regex: `a cookie header was received \[.*?\] that contained an invalid cookie\.`
@@ -34,32 +38,19 @@ Regex: `servlet\.service\(\) for servlet \[.*?\] in context with path \[\] threw
 Solution: This regex will help you identify instances where a servlet named "dispatcherservlet" in a specific context path throws an exception. You should investigate the servlet configuration and the exception stack trace to diagnose and resolve the issue.
 
 ---
+please suggest a regex for the following error and a brief solution to solve the following error:
 
-Error Example: discoveryclient_rdd-async-service/p1049433.prod.cloud.fedex.com:rdd-async-service:6521 - was unable to send heartbeat!
+New Error: """ + question + """
 
-Regex: `discoveryclient_.*? - was unable to send heartbeat!`
-
-Solution: This regex will help you identify instances where a component with a name starting with "discoveryclient_" was unable to send a heartbeat. You should check the configuration and network connectivity of the component to ensure it can send heartbeats as expected.
-
----
-
-Error Example: exception processing errorpage[errorcode=0, location=/error]
-
-Regex: `exception processing errorpage\[.*?\]`
-
-Solution: This regex will help you identify instances where an exception is raised during the processing of an error page. You should investigate the error page configuration and the specific error code to understand and address the issue.
-
----
-please suggest a regex for the following error and a brief solution in a single line to solve the following error:
-
+don't forget to end the response with ---
 
 just provide the two values in the following format:
 
-Regex: <regex>
+Regex: <regex to match the error>
 
-Solution: <solution>
+Solution: <solution>"""
 
-Error Example:""" + question,
+,
   max_tokens=244,
   temperature=0,
   k=0,
@@ -77,17 +68,17 @@ client = MongoClient(db_uri)
 
 
 dblist = client.list_database_names()
-print("the list of databases are: ", dblist)
+# print("the list of databases are: ", dblist)
 
 if db_database in dblist:
-    print("The database exists.")
+    # print("The database exists.")
 
-    db = client[db_database]  # Connect to the specified database
+    db = client[db_database]
 
 else:
-    print("The database does not exist.")
+    # print("The database does not exist.")
 
-    db = client[db_database]  # Connect to the specified database
+    db = client[db_database]
 
 
 # Ensure the collection exists, create it if it doesn't
@@ -97,28 +88,44 @@ if collection_name not in db.list_collection_names():
 
 collection = db[collection_name]
 
+def check_known_errors(user_input, category_filter=None, project_filter=None):
+    # Define the query filters based on the provided category and project
+    query_filters = {}
+    if category_filter:
+        query_filters["Category"] = category_filter
+    if project_filter:
+        query_filters["Project"] = project_filter
 
-def check_known_errors(user_input):
     # Check if the regex pattern matches any document in the MongoDB collection
     matched_errors = []
-    for error_doc in collection.find():
+    for error_doc in collection.find(query_filters):
         regex_pattern = error_doc["ErrorRegex"]
         if re.search(regex_pattern, user_input, re.IGNORECASE):
             matched_errors.append(error_doc["ErrorSolution"])
     return matched_errors
 
-
-def add_new_error(user_input, solution):
-    # Insert a new document into the MongoDB collection
-    error_doc = {"ErrorRegex": user_input, "ErrorSolution": solution}
+def add_new_error(user_input, solution, category, project, username):
+    # Insert a new document into the MongoDB collection with category, project, username, date, and time
+    error_doc = {
+        "ErrorRegex": user_input,
+        "ErrorSolution": solution,
+        "Category": category,
+        "Project": project,
+        "Username": username,
+        "Timestamp": datetime.now(),
+    }
     collection.insert_one(error_doc)
 
+def if_submit_button_clicked(new_error_regex, new_error_solution, selected_category, selected_project, user_name):
 
-def if_submit_button_clicked(new_error_input, new_error_solution):
-
-    if new_error_input and new_error_solution:
-        add_new_error(new_error_input, new_error_solution)
+    if new_error_regex and new_error_solution:
+        add_new_error(new_error_regex, new_error_solution, selected_category, selected_project, user_name)
         st.success("New error added to the database!")
+
+def reset_session_state():
+    # st.session_state.user_input = ""
+    st.session_state.new_error_regex = ""
+    st.session_state.new_error_solution = ""
 
 def main():
     # Streamlit app
@@ -151,114 +158,128 @@ def main():
         # Add title
         # st.title("Error Message Analyzer")
 
-        if "user_input" not in st.session_state:
-            st.session_state.user_input = ""
-
-        st.text_area(
-            "Enter your error message:", st.session_state.user_input, key="user_input"
-        )
-
-        if st.button("Check Error") or st.session_state.user_input:
-            matched_errors = check_known_errors(st.session_state.user_input)
-            if matched_errors:
-                st.success("Known Error Detected")
-                for error_solution, i in zip(
-                    matched_errors, range(len(matched_errors))
-                ):
-                    # Display the error solution in a good format
-                    st.write(f"Solution {i+1}:", error_solution)
-            else:
-                st.header("New Error Detected")
-                st.write("This error is not in the database. Would you like to add it?")
-
-                # # get the answer from chatgpt
-                # answer = get_chatgpt_answer("please suggest a regex and a solution for this error: " + st.session_state.user_input)
-
-                # # Display the answer
-                # st.write("suggested regex and solution: " + answer)
-
-                # add a spinner while waiting for the answer
-                with st.spinner(
-                    "Please wait while we suggest a regex and a solution for this error ..."
-                ):
-                    if "chatgpt_answer" not in st.session_state:
-                        st.session_state.chatgpt_answer = ""
-                        # get the answer from chatgpt
-
-                        try:
-
-                            answer = get_chatgpt_answer(
-                            f"""please suggest a regex for the following error and a brief solution to solve the following error:
-
-{st.session_state.user_input}
-
-just provide the two values in the following format:
-Regex: <regex>
-
-Solution: <solution>
+    if "user_input" not in st.session_state:
+        st.session_state.user_input = ""
+    if "new_error_regex" not in st.session_state:
+        st.session_state.new_error_regex = ""
+    if "new_error_solution" not in st.session_state:
+        st.session_state.new_error_solution = ""
 
 
-don't provide any other information in the message, just the regex and the solution. Thank you!"""
-                        )
-                            st.session_state.chatgpt_answer = answer
-                            # print("suggested regex and solution: \n " + st.session_state.chatgpt_answer )
-                        except Exception as e:
+    st.text_area(
+        "Enter your error message:", key="user_input", on_change=reset_session_state
+    )
+    # Dropdowns for selecting category and project
+    category_options = ["Devops", "Infra", "Database", "networking", "development", "All"]
+    selected_category = st.selectbox("Select Category", category_options, index=len(category_options)-1)
 
-                            print("error" + str(e))
+    project_options = ["EAI3535810", "EAI3536166", "EAI3535733", "EAI3535861", "EAI3537167",
+                       "EAI3538846", "EAI3531605", "EAI3535858", "EAI3537214", "EAI3538016", "EAI3538118", "All"]
+    selected_project = st.selectbox("Select Project", project_options, index=len(project_options)-1)
 
-                            st.write("Error in auto-suggesting a regex and a solution for this error. Please provide a regex and a solution manually.")
+    if st.button("Check Error") or st.session_state.user_input:
+        category_filter = selected_category if selected_category != "All" else None
+        project_filter = selected_project if selected_project != "All" else None
+        matched_errors = check_known_errors(st.session_state.user_input, category_filter, project_filter)
 
-                    # Display the answer
-                    # st.write("suggested regex and solution: " + answer)
+
+        if matched_errors:
+            st.success("Known Error Detected")
+            for error_solution, i in zip(matched_errors, range(len(matched_errors))):
+                # Display the error solution in a good format
+                st.write(f"Solution {i+1}:", error_solution)
+
+                # solution was added by on 2021-10-20 12:00:00 by user1
+
+                # beutiful_data_time = collection.find_one({"ErrorSolution": error_solution})["Timestamp"].
+
+                st.write("Solution was added by " + str(collection.find_one({"ErrorSolution": error_solution})["Username"]) + " on " + str(collection.find_one({"ErrorSolution": error_solution})["Timestamp"].strftime("%Y-%m-%d %H:%M:%S")))
 
 
+        else:
+            st.header("New Error Detected")
+            st.write("This error is not in the database. Would you like to add it?")
 
-                if "new_error_input" not in st.session_state:
-                    st.session_state.new_error_input = ""
-                if "new_error_solution" not in st.session_state:
-                    st.session_state.new_error_solution = ""
-
-                # try: to extract the regex and solution from the answer
+            # add a spinner while waiting for the answer
+            with st.spinner(
+                "Please wait while we suggest a regex and a solution for this error ..."
+            ):
+                st.session_state.chatgpt_answer = ""
+                # get the answer from chatgpt
 
                 try:
-                    regex = re.search(
-                        r"Regex:(.*)\n", st.session_state.chatgpt_answer
-                    ).group(1)
-                    solution = re.search(
-                        r"Solution: (.*)", st.session_state.chatgpt_answer
-                    ).group(1)
+                    st.session_state.chatgpt_answer = get_chatgpt_answer(
+                        f"""{st.session_state.user_input}"""
+                    )
 
-                    # remove the code block from the regex from the start and end if exists
-                    regex = re.sub(r"`", "", regex)
+                    print("answer is: ", st.session_state.chatgpt_answer)
 
-                    st.session_state.new_error_input = regex
-                    st.session_state.new_error_solution = solution
                 except Exception as e:
                     print("error" + str(e))
+                    st.write(
+                        "Error in auto-suggesting a regex and a solution for this error. Please provide a regex and a solution manually."
+                    )
 
-                    # print("the chatgpt answer is: ", st.session_state.chatgpt_answer)
+            # try: to extract the regex and solution from the answer
+            try:
 
-                    # st.write("Error in auto-suggesting a regex and a solution for this error. Please provide a regex and a solution manually.")
+                if not st.session_state.new_error_regex:
 
-                    if len(st.session_state.chatgpt_answer) > 0:
-                        st.write("suggested regex and solution: \n " + st.session_state.chatgpt_answer)
+                    regex = re.search(r"Regex:(.*)\n", st.session_state.chatgpt_answer).group(1).strip().strip("`")
+                    st.session_state.new_error_regex = regex
+
+                if not st.session_state.new_error_solution:
+
+                    # remove everything before the solution
+                    solution = st.session_state.chatgpt_answer.split("Solution:")[1].strip().strip("`").strip("---").strip()
+
+                    st.session_state.new_error_solution = solution
 
 
-                    # print("error in extracting the regex and solution from the answer")
+                # remove the code block from the regex from the start and end if exists
 
-                new_error_input = st.text_input(
+
+
+            except Exception as e:
+                print("error" + str(e))
+
+                print("error in extracting the regex and solution from the answer")
+
+                st.write(st.session_state.chatgpt_answer)
+
+
+            with st.form("new_error_form"):
+                new_error_regex = st.text_input(
                     "Error Regex (Edit if necessary):",
-                    key="new_error_input",
+                    key="new_error_regex",
                 )
                 new_error_solution = st.text_area(
                     "Error Solution (Provide a solution for the error):",
                     key="new_error_solution",
+                    height=300,
+
                 )
 
-                if st.button("Submit"):
-                    if_submit_button_clicked(new_error_input, new_error_solution)
+                new_selected_category = st.selectbox("Select Category", category_options, index=len(category_options)-1, key="new_selected_category")
 
-    st.write("Please reload the page to check another error.")
+                new_selected_project = st.selectbox("Select Project", project_options, index=len(project_options)-1, key="new_selected_project")
+
+
+
+
+
+                user_name = st.text_input("Enter your username:", key="user_name")
+
+                submit = st.form_submit_button("Submit")
+
+            if submit:
+
+                if_submit_button_clicked(new_error_regex, new_error_solution, new_selected_category, new_selected_project, user_name)
+
+
+
+
+    # st.write("Please reload the page to check another error.")
 
 if __name__ == "__main__":
     main()
